@@ -1,0 +1,24 @@
+default_platform(:android)
+
+lane :deploy_firebase do
+  releaseNotes = changelog_from_git_commits(
+      commits_count: 10,
+      date_format: "format:%d %b",
+      pretty: "- (%cd) %s",
+      merge_commit_filtering: "exclude_merges",
+      quiet: true
+  ).split("\n").select do |elem|
+    !elem.include? "skip-ci"
+  end[0...5].join("\n")
+
+  print("RELEASE NOTES:\n")
+  print(releaseNotes)
+
+  firebase_app_distribution(
+      app: "1:344872850667:android:7e5382988fa02d0060daae",
+      groups: "android-testers",
+      release_notes: releaseNotes,
+      apk_path: "../build/app/outputs/flutter-apk/app-profile.apk",
+      firebase_cli_token: ENV["FIREBASE_TOKEN"]
+  )
+end

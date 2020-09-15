@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  function currentUser(userId) {
+    return request.auth != null && request.auth.uid == userId
+  }
+  match /databases/{database}/documents {
+    match /users/{userId}/{document=**} {
+          allow read: if currentUser(userId);
+          allow write: if currentUser(userId);
+
+        }
+  }
+}

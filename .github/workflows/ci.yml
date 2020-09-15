@@ -1,0 +1,121 @@
+name: Pull Request Workflow
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: self-hosted
+    timeout-minutes: 30
+    env:
+      ANDROID_SDK_ROOT: /usr/local/share/android-sdk
+      ANDROID_HOME: /usr/local/share/android-sdk
+      ANDROID_SDK_HOME: /usr/local/share/android-sdk
+      LC_ALL: en_US.UTF-8
+      FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+      MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+
+      LANG: en_US.UTF-8
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 5
+      - name: Install brew dependencies
+        run: |
+          brew cask install android-sdk
+      - name: recent commit messages
+        run: |
+          git log  --pretty=oneline -n 5
+
+      - name: Install ruby dependencies
+        run: |
+          curl -sSL https://get.rvm.io | bash -s stable --ruby
+          source ~/.rvm/scripts/rvm
+          rvm install 2.7
+          rvm use 2.7
+
+      - name: Install ruby in Android
+        working-directory: ./android
+        run: |
+          rvm use 2.7
+          bundle install
+
+      - name: Install ruby in iOS
+        working-directory: ./ios
+        run: |
+          rvm use 2.7
+          bundle install
+
+      - name: Update pod repo
+        working-directory: ./ios
+        run: |
+          bundle exec pod repo update
+
+      - name: Install Android SDK
+        run: |
+          (echo y;) | sdkmanager "build-tools;29.0.3"
+          (echo y;) | sdkmanager "system-images;android-29;google_apis_playstore;x86"
+
+      - name: configure Flutter
+        uses: subosito/flutter-action@v1
+        with:
+          flutter-version: '1.23.0-18.1.pre'
+          channel: 'beta'
+
+      - name: run format check
+        run: find lib -name "*.dart" -not -name "*.g.dart" -not -name "*.freezed.dart" -exec dartfmt -l 140 --dry-run --set-exit-if-changed {} +;
+
+      - name: generate build_runner files
+        run: |
+          flutter pub get
+          flutter pub global activate intl_utils
+          flutter pub global run intl_utils:generate
+          flutter pub run build_runner build --delete-conflicting-outputs
+
+      - name: run tests
+        run: flutter test
+
+      - name: run analyze
+        run: flutter analyze
+
+      - name: build Android Profile + Release
+        run: |
+          flutter build appbundle
+          flutter build apk --profile --build-number $GITHUB_RUN_NUMBER
+
+      # we build release version in Flutter and ipa file in fastlane, since flutter does not generate ipa file,
+      # which is needed for firebase app distribution
+      - name: build iOS Debug with Flutter
+        working-directory: ./ios
+        run: |
+          flutter build ios --profile --no-codesign --build-number $GITHUB_RUN_NUMBER
+
+      - name: build iOS ipa file
+        working-directory: ./ios
+        run: |
+          source ~/.rvm/scripts/rvm
+          rvm use 2.7
+          gem install bundler
+          bundle install
+          bundle exec fastlane match development --readonly # fastlane reads build number from ENV["FLUTTER_BUILD_NUMBER"]
+          bundle exec fastlane build_development # we want the ipa file to be generated first
+#
+#     - name: run integration tests
+#       run: flutter drive --target=test_driver/app.dart
+
+      - name: deploy firebase Android
+        if: github.ref == 'refs/heads/master'
+        working-directory: ./android
+        run: |
+          source ~/.rvm/scripts/rvm
+          rvm use 2.7
+          gem install bundler
+          bundle install
+          bundle exec fastlane deploy_firebase
+
+      - name: deploy firebase iOS
+        if: github.ref == 'refs/heads/master'
+        working-directory: ./ios
+        run: |
+          source ~/.rvm/scripts/rvm
+          rvm use 2.7
+          bundle exec fastlane deploy_firebase
